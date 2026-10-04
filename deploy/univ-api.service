@@ -1,0 +1,31 @@
+# systemd unit for the Express API. Copy to /etc/systemd/system/univ-api.service
+# on the droplet, then:  sudo systemctl daemon-reload && sudo systemctl enable --now univ-api
+#
+# Why systemd and not PM2: it ships with Ubuntu (nothing extra to install),
+# it starts the API on boot and restarts it after a crash, and it runs the
+# exact same `node src/index.js` we run locally — no wrapper in between.
+# Logs:  journalctl -u univ-api -f
+
+[Unit]
+Description=UNIV-Platform API (Express + Prisma)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=deploy
+# WorkingDirectory is what lets dotenv find server/.env — dotenv looks for
+# ".env" in whatever folder the process was started from.
+WorkingDirectory=/home/deploy/univ-platform/server
+Environment=NODE_ENV=production
+# Check with `which node` on the droplet; NodeSource installs it here.
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=3
+
+# Cheap hardening: the API never needs to gain new privileges or share /tmp.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

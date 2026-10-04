@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  STUDENT
+  TEACHER
+  ADMIN
+
+  @@map("role")
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  DROPPED
+  COMPLETED
+
+  @@map("enrollment_status")
+}
+
+// One table for everybody; `role` drives RBAC. Everyone registers as STUDENT;
+// only an admin can promote a user to TEACHER (or ADMIN).
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String
+  email        String    @unique
+  // Nullable because a Google-only account has no password at all.
+  // Exactly one of passwordHash / googleId should be set for a given user
+  // — enforced in code (auth.routes.js), not by the database, since Prisma
+  // can't express "at least one of these two columns" as a constraint.
+  passwordHash String?   @map("password_hash")
+  googleId     String?   @unique @map("google_id")
+  role         Role      @default(STUDENT)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at") // soft delete: set instead of removing the row
+
+  sectionsTaught Section[]    @relation("TeacherSections")
+  enrollments    Enrollment[] @relation("StudentEnrollments")
+  gradesGiven    Enrollment[] @relation("GradedBy")
+
+  @@map("users")
+}
+
+// The catalogue entry: "CS101 - Intro to Programming". Has no term or teacher.
+// Created on demand when a teacher starts a class with a new course code.
+model Course {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
+  title       String
+  description String?
+  credits     Int
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  sections Section[]
+
+  @@map("courses")
+}
+
+// One offering of a course: CS101, Fall 2025, taught by Dr. X.
+// Students join it by entering `joinCode`.
+model Section {
+  id             String   @id @default(uuid()) @db.Uuid
+  courseId       String   @map("course_id") @db.Uuid
+  teacherId      String   @map("teacher_id") @db.Uuid
+  term           String // e.g. "2025-FALL"
+  joinCode       String   @unique @map("join_code")
+  joinCodeActive Boolean  @default(true) @map("join_code_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  course      Course       @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  teacher     User         @relation("TeacherSections", fields: [teacherId], references: [id], onDelete: Restrict)
+  enrollments Enrollment[]
+
+  @@unique([courseId, term, teacherId])
+  @@index([teacherId])
+  @@map("sections")
+}
+
+// A student in a section. Holds the single final grade.
+model Enrollment {
+  id         String           @id @default(uuid()) @db.Uuid
+  studentId  String           @map("student_id") @db.Uuid
+  sectionId  String           @map("section_id") @db.Uuid
+  status     EnrollmentStatus @default(ACTIVE)
+  finalGrade Decimal?         @map("final_grade") @db.Decimal(5, 2) // 0-100, null until graded
+  gradedById String?          @map("graded_by_id") @db.Uuid
+  gradedAt   DateTime?        @map("graded_at")
+  enrolledAt DateTime         @default(now()) @map("enrolled_at")
+  deletedAt  DateTime?        @map("deleted_at") // soft delete
+
+  student  User    @relation("StudentEnrollments", fields: [studentId], references: [id], onDelete: Restrict)
+  section  Section @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  gradedBy User?   @relation("GradedBy", fields: [gradedById], references: [id], onDelete: SetNull)
+
+  @@unique([studentId, sectionId])
+  @@index([sectionId])
+  @@map("enrollments")
+}
